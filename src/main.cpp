@@ -92,16 +92,16 @@ int main() {
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
 
-          for (int i = 0; i < ptsx.size(); i++) {
+          for (unsigned short i = 0; i < ptsx.size(); i++) {
         	  double shift_x = ptsx[i] - px;
-        	  double shift_y = ptsx[i] - py;
+        	  double shift_y = ptsy[i] - py;
 
-        	  ptsx[i] = (shift_x * cos(0 - psi) - shift_y * sin(0 - psi));
-        	  ptsx[i] = (shift_x * sin(0 - psi) + shift_y * cos(0 - psi));
+        	  ptsx[i] = shift_x * cos(0 - psi) - shift_y * sin(0 - psi);
+        	  ptsy[i] = shift_x * sin(0 - psi) + shift_y * cos(0 - psi);
           }
 
           double* ptrx = &ptsx[0];
-          Eigen:Map<Eigen::VectorXd> ptsx_transform(ptrx, 6);
+          Eigen::Map<Eigen::VectorXd> ptsx_transform(ptrx, 6);
 
           double* ptry = &ptsy[0];
           Eigen::Map<Eigen::VectorXd> ptsy_transform(ptry, 6);
@@ -112,12 +112,21 @@ int main() {
           // double epsi = psi - atan(coeffs[1] + 2 * px * coeffs[2] + 3 * coeffs[3] * pow(px, 2))
           double epsi = -atan(coeffs[1]);
 
-
           double steer_value = j[1]["steering_angle"];
           double throttle_value = j[1]["throttle"];
 
+          const double Lf = 2.67;
+          const double delay_t = 0.1;
+
+          double delay_x = v * delay_t;
+          double delay_y = 0;
+          double delay_psi = -v * steer_value / Lf * delay_t;
+          double delay_v = v + throttle_value * delay_t;
+          double delay_cte = cte + v * sin(epsi) * delay_t;
+          double delay_epsi = epsi - v * steer_value / Lf * delay_t;
+
           Eigen::VectorXd state(6);
-          state << 0, 0, 0, v, cte, epsi;
+          state << delay_x, delay_y, delay_psi, delay_v, delay_cte, delay_epsi;
 
 
           /*
@@ -134,9 +143,21 @@ int main() {
 
           double poly_inc = 2.5;
           int num_points = 25;
-          for (int i = 1; i < num_points; i++) {
+          for (unsigned short i = 1; i < num_points; i++) {
         	  next_x_vals.push_back(poly_inc * i);
         	  next_y_vals.push_back(polyeval(coeffs, poly_inc * i));
+          }
+
+          //Display the MPC predicted trajectory 
+          vector<double> mpc_x_vals;
+          vector<double> mpc_y_vals;
+
+          for (unsigned short i = 2; i < vars.size(); i++) {
+            if (i % 2 == 0) {
+              mpc_x_vals.push_back(vars[i]);
+            } else {
+              mpc_y_vals.push_back(vars[i]);
+            }
           }
 
 
@@ -144,23 +165,10 @@ int main() {
           // NOTE: Remember to divide by deg2rad(25) before you send the steering value back.
           // Otherwise the values will be in between [-deg2rad(25), deg2rad(25] instead of [-1, 1].
           // msgJson["steering_angle"] = steer_value;
-          msgJson["steering_angle"] = vars[0] / (deg2rad(25) * Lf);
+          msgJson["steering_angle"] = vars[0]; // / (deg2rad(25) * Lf);
           // msgJson["throttle"] = throttle_value;
           msgJson["throttle"] = vars[1];
 
-          //Display the MPC predicted trajectory 
-          vector<double> mpc_x_vals;
-          vector<double> mpc_y_vals;
-
-          for (int i = 2; i < vars.size(); i++) {
-        	  if (i % 2 == 0) {
-        		  mpc_x_vals.push_back(vars[i]);
-        	  } else {
-        		  mpc_y_vals.push_back(vars[i]);
-        	  }
-          }
-
-          double Lf = 2.67;
 
           //.. add (x,y) points to list here, points are in reference to the vehicle's coordinate system
           // the points in the simulator are connected by a Green line
@@ -190,7 +198,7 @@ int main() {
           //
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          this_thread::sleep_for(chrono::milliseconds(100));
+          this_thread::sleep_for(chrono::milliseconds((int) (delay_t * 100)));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
