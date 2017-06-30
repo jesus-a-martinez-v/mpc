@@ -5,7 +5,7 @@
 
 using CppAD::AD;
 
-// TODO: Set the timestep length and duration
+// Timestep length and duration
 size_t N = 10;
 double dt = 0.1;
 
@@ -23,7 +23,7 @@ const double Lf = 2.67;
 
 double ref_cte = 0;
 double ref_epsi = 0;
-double ref_v = 100;
+double ref_v = 120;
 
 size_t x_start = 0;
 size_t y_start = x_start + N;
@@ -34,11 +34,24 @@ size_t epsi_start = cte_start + N;
 size_t delta_start = epsi_start + N;
 size_t a_start = delta_start + N - 1;
 
+// Hyperparameters for the cost function
+double cte_weight = 4000.0;
+double angle_weight = 2000.0;
+double velocity_weight = 1.0;
+
+double delta_weight = 2.0;
+double acceleration_weight = 3.0;
+
+double delta_change_weight = 200.0;
+double acceleration_change_weight = 10.0;
+
 class FG_eval {
- public:
+public:
   // Fitted polynomial coefficients
   Eigen::VectorXd coeffs;
-  FG_eval(Eigen::VectorXd coeffs) { this->coeffs = coeffs; }
+  FG_eval(Eigen::VectorXd coeffs) { 
+    this->coeffs = coeffs; 
+  }
 
   typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
   void operator()(ADvector& fg, const ADvector& vars) {
@@ -49,59 +62,73 @@ class FG_eval {
 
 	  fg[0] = 0;
 
-	  for(unsigned short i = 0; i < N; i++) {
-		  fg[0] += 2000 * CppAD::pow(vars[cte_start + i] - ref_cte, 2);
-		  fg[0] += 2000 * CppAD::pow(vars[epsi_start + i] - ref_epsi, 2);
-		  fg[0] += CppAD::pow(vars[v_start + i] - ref_v, 2);
-	  }
+    updateCostUsingStateVariables(fg, vars, cte_weight, angle_weight, velocity_weight);
+    updateCostUsingActuatorVariables(fg, vars, delta_weight, acceleration_weight);
+    updateCostUsingActuatorsChangeRate(fg, vars, delta_change_weight, acceleration_change_weight);
 
-	  for(unsigned short i = 0; i < N - 1; i++) {
-		  fg[0] += 5 * CppAD::pow(vars[delta_start + i], 2);
-		  fg[0] += 5 * CppAD::pow(vars[a_start + i], 2);
-	  }
-
-	  for(unsigned short i = 0; i < N - 2; i++) {
-		  fg[0] += 200 * CppAD::pow(vars[delta_start + i + 1] - vars[delta_start + i], 2);
-		  fg[0] += 10 * CppAD::pow(vars[a_start + i + 1] - vars[a_start + i], 2);
-
-	  }
-
-	  fg[1 + x_start] = vars[x_start];
-	  fg[1 + y_start] = vars[y_start];
-	  fg[1 + psi_start] = vars[psi_start];
-	  fg[1 + v_start] = vars[v_start];
-	  fg[1 + cte_start] = vars[cte_start];
-	  fg[1 + epsi_start] = vars[epsi_start];
-
-	  for (unsigned short i = 0; i < N - 1; i++) {
-		  AD<double> x1 = vars[x_start + i + 1];
-		  AD<double> y1 = vars[y_start + i + 1];
-		  AD<double> psi1 = vars[psi_start + i + 1];
-		  AD<double> v1 = vars[v_start + i + 1];
-		  AD<double> cte1 = vars[cte_start + i + 1];
-		  AD<double> epsi1 = vars[epsi_start + i + 1];
-
-		  AD<double> x0 = vars[x_start + i];
-		  AD<double> y0 = vars[y_start + i];
-		  AD<double> psi0 = vars[psi_start + i];
-		  AD<double> v0 = vars[v_start + i];
-		  AD<double> cte0 = vars[cte_start + i];
-		  AD<double> epsi0 = vars[epsi_start + i];
-
-		  AD<double> delta0 = vars[delta_start + i];
-		  AD<double> a0 = vars[a_start + i];
-
-		  AD<double> f0 = coeffs[0] + coeffs[1] * x0 + coeffs[2] * x0 * x0 + coeffs[3] * x0 * x0 * x0;
-		  AD<double> psides0 = CppAD::atan(3 * coeffs[3] * x0 * x0 + 2 * coeffs[2] * x0 + coeffs[1]);
-
-		  fg[2 + x_start + i] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
-		  fg[2 + y_start + i] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
-		  fg[2 + psi_start + i] = psi1 - (psi0 - v0 * delta0 / Lf * dt);
-		  fg[2 + v_start + i] = v1 - (v0 + a0 * dt);
-		  fg[2 + cte_start + i] = cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
-		  fg[2 + epsi_start + i] = epsi1 - ((psi0 - psides0) - v0 * delta0 / Lf * dt);
-	  }
+    updateState(fg, vars);
   }
+private:
+  void updateCostUsingStateVariables(ADvector& fg, const ADvector& vars, double cte_weight, double angle_weight, double velocity_weight) {
+    for(unsigned short i = 0; i < N; i++) {
+       fg[0] += cte_weight * CppAD::pow(vars[cte_start + i] - ref_cte, 2);
+       fg[0] += angle_weight * CppAD::pow(vars[epsi_start + i] - ref_epsi, 2);
+       fg[0] += velocity_weight * CppAD::pow(vars[v_start + i] - ref_v, 2);
+     }
+   }
+
+  void updateCostUsingActuatorVariables(ADvector& fg, const ADvector& vars, double delta_weight, double acceleration_weight) {
+    for(unsigned short i = 0; i < N - 1; i++) {
+      fg[0] += delta_weight * CppAD::pow(vars[delta_start + i], 2);
+      fg[0] += acceleration_weight * CppAD::pow(vars[a_start + i], 2);
+    }
+  }
+
+  void updateCostUsingActuatorsChangeRate(ADvector& fg, const ADvector& vars, double delta_change_weight, double acceleration_change_weight) {
+    for(unsigned short i = 0; i < N - 2; i++) {
+      fg[0] += delta_change_weight * CppAD::pow(vars[delta_start + i + 1] - vars[delta_start + i], 2);
+      fg[0] += acceleration_change_weight * CppAD::pow(vars[a_start + i + 1] - vars[a_start + i], 2);
+    }
+  }
+
+  void updateState(ADvector& fg, const ADvector& vars) {
+    fg[1 + x_start] = vars[x_start];
+    fg[1 + y_start] = vars[y_start];
+    fg[1 + psi_start] = vars[psi_start];
+    fg[1 + v_start] = vars[v_start];
+    fg[1 + cte_start] = vars[cte_start];
+    fg[1 + epsi_start] = vars[epsi_start];
+
+    for (unsigned short i = 0; i < N - 1; i++) {
+      AD<double> x1 = vars[x_start + i + 1];
+      AD<double> y1 = vars[y_start + i + 1];
+      AD<double> psi1 = vars[psi_start + i + 1];
+      AD<double> v1 = vars[v_start + i + 1];
+      AD<double> cte1 = vars[cte_start + i + 1];
+      AD<double> epsi1 = vars[epsi_start + i + 1];
+
+      AD<double> x0 = vars[x_start + i];
+      AD<double> y0 = vars[y_start + i];
+      AD<double> psi0 = vars[psi_start + i];
+      AD<double> v0 = vars[v_start + i];
+      AD<double> cte0 = vars[cte_start + i];
+      AD<double> epsi0 = vars[epsi_start + i];
+
+      AD<double> delta0 = vars[delta_start + i];
+      AD<double> a0 = vars[a_start + i];
+
+      AD<double> f0 = coeffs[0] + coeffs[1] * x0 + coeffs[2] * x0 * x0 + coeffs[3] * x0 * x0 * x0;
+      AD<double> psides0 = CppAD::atan(3 * coeffs[3] * x0 * x0 + 2 * coeffs[2] * x0 + coeffs[1]);
+
+      fg[2 + x_start + i] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
+      fg[2 + y_start + i] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
+      fg[2 + psi_start + i] = psi1 - (psi0 - v0 * delta0 / Lf * dt);
+      fg[2 + v_start + i] = v1 - (v0 + a0 * dt);
+      fg[2 + cte_start + i] = cte1 - ((f0 - y0) + (v0 * CppAD::sin(epsi0) * dt));
+      fg[2 + epsi_start + i] = epsi1 - ((psi0 - psides0) - v0 * delta0 / Lf * dt);
+    }
+  }
+
 };
 
 //
@@ -126,9 +153,12 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // element vector and there are 10 timesteps. The number of variables is:
   //
   // 4 * 10 + 2 * 9
-  size_t n_vars = N * 6 + (N - 1) * 2;
+  size_t model_arity = 6;
+  size_t actuators_arity = 2;
+
+  size_t n_vars = N * model_arity + (N - 1) * actuators_arity;
   // TODO: Set the number of constraints
-  size_t n_constraints = N * 6;
+  size_t n_constraints = N * model_arity;
 
   // Initial value of the independent variables.
   // SHOULD BE 0 besides initial state.
@@ -149,14 +179,9 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   for (unsigned short j = delta_start; j < a_start; j++) {
 	  vars_lowerbound[j] = -1.0;
 	  vars_upperbound[j] = 1.0;
-	  //vars_lowerbound[i] = -0.436332 * Lf;
-	  //vars_upperbound[i] = 0.436332 * Lf;
   }
 
   for (unsigned short j = a_start; j < n_vars; j++) {
-	  // vars_lowerbound[i] = -0.436332 * Lf;
-	  // vars_upperbound[i] = 0.436332 * Lf;
-	  vars_lowerbound[j] = -1.0;
 	  vars_upperbound[j] = 1.0;
   }
 
@@ -233,5 +258,6 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
 	  result.push_back(solution.x[x_start + j + 1]);
 	  result.push_back(solution.x[y_start + j + 1]);
   }
+
   return result;
 }

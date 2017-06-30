@@ -109,24 +109,23 @@ int main() {
           auto coeffs = polyfit(ptsx_transform, ptsy_transform, 3);
 
           double cte = polyeval(coeffs, 0);
-          // double epsi = psi - atan(coeffs[1] + 2 * px * coeffs[2] + 3 * coeffs[3] * pow(px, 2))
           double epsi = -atan(coeffs[1]);
 
           double steer_value = j[1]["steering_angle"];
           double throttle_value = j[1]["throttle"];
 
           const double Lf = 2.67;
-          const double delay_t = 0.1;
+          const double delay = 0.1;
 
-          double delay_x = v * delay_t;
-          double delay_y = 0;
-          double delay_psi = -v * steer_value / Lf * delay_t;
-          double delay_v = v + throttle_value * delay_t;
-          double delay_cte = cte + v * sin(epsi) * delay_t;
-          double delay_epsi = epsi - v * steer_value / Lf * delay_t;
+          double future_x = v * delay;
+          double future_y = 0;
+          double future_psi = -v * steer_value / Lf * delay;
+          double future_v = v + throttle_value * delay;
+          double future_cte = cte + v * sin(epsi) * delay;
+          double future_epsi = epsi - v * steer_value / Lf * delay;
 
           Eigen::VectorXd state(6);
-          state << delay_x, delay_y, delay_psi, delay_v, delay_cte, delay_epsi;
+          state << future_x, future_y, future_psi, future_v, future_cte, future_epsi;
 
 
           /*
@@ -198,7 +197,7 @@ int main() {
           //
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          this_thread::sleep_for(chrono::milliseconds((int) (delay_t * 100)));
+          this_thread::sleep_for(chrono::milliseconds(100));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
